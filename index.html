@@ -1,158 +1,74 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <title>AI 批量去背 (規格過濾版)</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.4.5/dist/bundle.js"></script>
-    <style>
-        :root { --primary: #4A90E2; --success: #27AE60; --danger: #E74C3C; }
-        body { font-family: sans-serif; background: #f4f7f9; padding: 40px 20px; display: flex; flex-direction: column; align-items: center; }
-        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); width: 100%; max-width: 650px; }
-        #drop-zone { border: 2px dashed #cbd5e0; border-radius: 10px; padding: 40px; text-align: center; cursor: pointer; background: #fff; }
-        #drop-zone:hover { border-color: var(--primary); background: #f0f7ff; }
-        .info-panel { background: #eef2f7; padding: 15px; border-radius: 8px; margin: 20px 0; font-size: 0.9rem; }
-        .progress-bar-bg { background: #edf2f7; height: 12px; border-radius: 6px; overflow: hidden; margin: 10px 0; }
-        #progress-bar-fill { background: var(--primary); width: 0%; height: 100%; transition: width 0.3s; }
-        #log-area { margin-top: 20px; text-align: left; font-size: 0.85rem; max-height: 200px; overflow-y: auto; border: 1px solid #eee; padding: 10px; border-radius: 5px; display: none; }
-        .log-error { color: var(--danger); margin-bottom: 5px; }
-        .btn-download { background: var(--success); color: white; padding: 15px 40px; border: none; border-radius: 30px; font-size: 1.1rem; cursor: pointer; display: none; margin: 20px auto; }
-    </style>
-</head>
-<body>
+async function handleFiles(files) {
+        if (files.length === 0) return;
 
-    <div class="container">
-        <h2>🖼️ 限時特賣商品圖批次處理工具 v2 </h2>
-        
-        <div id="drop-zone">拖曳圖片至此，或點擊選取</div>
-        <input type="file" id="file-input" multiple accept="image/*" style="display:none;">
+        // 初始化
+        const zip = new JSZip();
+        zipBlob = null;
+        logList.innerHTML = "";
+        logArea.style.display = "none";
+        downloadBtn.style.display = "none";
+        processArea.style.display = "block";
 
-        <div class="info-panel">
-            <strong>⚙️ 說明：</strong>
-            <ul>
-                <li>檔名限制：SID_PID，不可含有 <b>半形數字</b> 與 <b>下底線 (_)</b> 以外內容</li>
-                <li>尺寸自動調整：<b>800x800 </b></li>
-                <li>去背：<b>AI 自動去背</b></li>
-                <li>轉檔：<b>自動轉 PNG</b></li>
-                <li><font color="#D0011B"><b>不符規則或問題檔案會自動跳過</b></font></li>
-            </ul>
-        </div>
+        const total = files.length;
 
-        <div id="process-area" style="display:none; width: 100%;">
-            <div id="status-text" style="font-weight:bold;">準備中...</div>
-            <div class="progress-bar-bg"><div id="progress-bar-fill"></div></div>
-            <p id="counter-text" style="font-size: 0.8rem; color: #999; text-align:right;">0 / 0</p>
-        </div>
+        for (let i = 0; i < total; i++) {
+            const file = files[i];
+            const fileNameWithExt = file.name;
+            const fileNameOnly = fileNameWithExt.split('.').slice(0, -1).join('.').trim();
 
-        <div id="log-area"><strong>⚠️ 未處理圖片檔：</strong><div id="log-list"></div></div>
+            // 更新進度
+            statusText.innerText = `正在處理: ${fileNameWithExt}`;
+            counterText.innerText = `${i + 1} / ${total}`;
+            progressBar.style.width = `${((i + 1) / total) * 100}%`;
 
-        <button class="btn-download" id="download-btn">🚀 下載 ZIP 檔</button>
-    </div>
+            // 1. 檢查檔名：數字 + 底線
+            const namePattern = /^[0-9_]+$/;
+            if (!namePattern.test(fileNameOnly)) {
+                addLog(fileNameWithExt, `檔名格式錯誤 (含有數字與底線以外的字元: "${fileNameOnly}")`);
+                continue;
+            }
 
-    <script>
-        const fileInput = document.getElementById('file-input');
-        const dropZone = document.getElementById('drop-zone');
-        const logArea = document.getElementById('log-area');
-        const logList = document.getElementById('log-list');
-        const downloadBtn = document.getElementById('download-btn');
-        const progressBar = document.getElementById('progress-bar-fill');
-        const statusText = document.getElementById('status-text');
-        const counterText = document.getElementById('counter-text');
-
-        let zipResult = null;
-
-        dropZone.onclick = () => fileInput.click();
-        fileInput.onchange = (e) => handleFiles(e.target.files);
-        dropZone.ondragover = (e) => { e.preventDefault(); dropZone.style.borderColor = '#4A90E2'; };
-        dropZone.ondrop = (e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); };
-
-        async function handleFiles(files) {
-            if (files.length === 0) return;
-
-            const zip = new JSZip();
-            const total = files.length;
-            let skipCount = 0;
-            
-            // 重置介面
-            logList.innerHTML = "";
-            logArea.style.display = "none";
-            downloadBtn.style.display = "none";
-            document.getElementById('process-area').style.display = "block";
-
-            for (let i = 0; i < total; i++) {
-                const file = files[i];
-                const fileNameWithExt = file.name;
-                const fileNameOnly = fileNameWithExt.split('.').slice(0, -1).join('.');
-                
-                // 更新進度
-                statusText.innerText = `檢查中: ${fileNameWithExt}`;
-                counterText.innerText = `${i + 1} / ${total}`;
-                progressBar.style.width = `${((i + 1) / total) * 100}%`;
-
-                // 1. 檔名檢查規則：僅允許半形數字(0-9)與下底線(_)
-                const namePattern = /^[0-9_]+$/;
-                if (!namePattern.test(fileNameOnly)) {
-                    addLog(fileNameWithExt, "檔名格式不符 (僅限數字與下底線)");
-                    skipCount++;
-                    continue;
-                }
-
+            try {
+                // 2. AI 去背
+                // 這裡會攔截環境與 AI 處理錯誤
+                let noBgBlob;
                 try {
-                    // 2. AI 去背處理 (會自動跳過無法處理的檔案)
-                    statusText.innerText = `AI 去背中: ${fileNameWithExt}`;
-                    const noBgBlob = await imglyRemoveBackground(file);
-
-                    // 3. 縮放 800x800
-                    const finalBlob = await resizeImage(noBgBlob, 800, 800);
-                    
-                    // 4. 加入打包
-                    zip.file(`${fileNameOnly}.png`, finalBlob);
-                } catch (err) {
-                    addLog(fileNameWithExt, "圖檔需重新確認");
-                    skipCount++;
+                    noBgBlob = await imglyRemoveBackground(file);
+                } catch (aiErr) {
+                    // 區分是環境問題還是檔案問題
+                    if (window.crossOriginIsolated === false) {
+                        throw new Error("安全環境未啟動 (請確認 coi-serviceworker.js 是否正確安裝)");
+                    } else {
+                        throw new Error("AI 無法去背此圖 (圖檔可能過大或格式特殊)");
+                    }
                 }
+
+                // 3. 縮放 800x800
+                const finalBlob = await resizeTo800(noBgBlob);
+
+                // 4. 加入打包
+                zip.file(`${fileNameOnly}.png`, finalBlob);
+
+            } catch (err) {
+                // 捕捉所有流程中的異常並顯示具體原因
+                addLog(fileNameWithExt, err.message);
             }
-
-            statusText.innerText = "✅ 處理結束";
-            if (Object.keys(zip.files).length > 0) {
-                zipResult = await zip.generateAsync({ type: "blob" });
-                downloadBtn.style.display = "block";
-            } else {
-                statusText.innerText = "❌ 沒有符合規則且可處理的檔案";
-            }
         }
 
-        function addLog(filename, reason) {
-            logArea.style.display = "block";
-            const div = document.createElement('div');
-            div.className = "log-error";
-            div.innerText = `❌ 跳過: ${filename} (${reason})`;
-            logList.appendChild(div);
+        statusText.innerText = "✅ 處理結束";
+        if (Object.keys(zip.files).length > 0) {
+            zipBlob = await zip.generateAsync({ type: "blob" });
+            downloadBtn.style.display = "block";
+        } else {
+            statusText.innerText = "❌ 無任何檔案符合規範";
         }
+    }
 
-        function resizeImage(blob, width, height) {
-            return new Promise((resolve) => {
-                const img = new Image();
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = width; canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    const ratio = Math.min(width / img.width, height / img.height);
-                    const nw = img.width * ratio, nh = img.height * ratio;
-                    ctx.clearRect(0, 0, width, height);
-                    ctx.drawImage(img, (width - nw) / 2, (height - nh) / 2, nw, nh);
-                    canvas.toBlob((b) => resolve(b), 'image/png');
-                };
-                img.src = URL.createObjectURL(blob);
-            });
-        }
-
-        downloadBtn.onclick = () => {
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(zipResult);
-            link.download = `output_${Date.now()}.zip`;
-            link.click();
-        };
-    </script>
-</body>
-</html>
+    // 統一的錯誤顯示函式
+    function addLog(filename, reason) {
+        logArea.style.display = "block";
+        const div = document.createElement('div');
+        div.className = "log-item";
+        div.innerHTML = `<strong>❌ 跳過：</strong> ${filename} <br> <span style="margin-left: 20px; color: #666;">原因：${reason}</span>`;
+        logList.appendChild(div);
+    }
